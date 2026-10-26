@@ -1,0 +1,16 @@
+﻿item_id,name,name_zh,category,price,available,description
+1,Single Room,單人房,room,1800,1,一張單人床，適合一位旅客；示範價格每房每晚。
+2,Standard Double,標準雙人房,room,2600,1,一張雙人床；示範價格每房每晚。
+3,Twin Room,雙床房,room,2800,1,兩張單人床；示範價格每房每晚。
+4,Deluxe Double,豪華雙人房,room,3400,1,較寬敞的雙人房；示範價格每房每晚。
+5,Family Room,家庭房,room,4200,1,適合家庭旅客；示範價格每房每晚。
+6,Suite,套房,room,5600,1,較大空間的套房；示範價格每房每晚。
+7,Single Room with Breakfast,單人房含早餐,package,2100,1,單人房一晚，含一份早餐；示範價格每房每晚。
+8,Standard Double with Breakfast,雙人房含早餐,package,3000,1,標準雙人房一晚，含兩份早餐；示範價格每房每晚。
+9,Twin Room with Breakfast,雙床房含早餐,package,3200,1,雙床房一晚，含兩份早餐；示範價格每房每晚。
+10,Deluxe Double with Breakfast,豪華雙人房含早餐,package,3800,1,豪華雙人房一晚，含兩份早餐；示範價格每房每晚。
+11,Family Room with Breakfast,家庭房含早餐,package,4800,1,家庭房一晚，含早餐；示範價格每房每晚。
+12,Suite with Breakfast,套房含早餐,package,6200,1,套房一晚，含早餐；示範價格每房每晚。
+13,Late Check-out Add-on,延後退房加購,service,600,1,示範加購費用；是否可提供需先向櫃檯確認。
+14,Airport Transfer,機場接送,service,1200,0,示範單趟費用；目前資料標示未供應，請向櫃檯確認。
+15,Extra Bed,加床服務,service,900,1,示範每晚費用；須先確認房型是否適用。
