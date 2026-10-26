@@ -118,6 +118,35 @@ def get_room_info(item_name):
     ]}
 
 
+
+def compare_rooms(room_name_1, room_name_2):
+    """比較兩個資料庫房型；只提供示範價格、說明與供應標記。"""
+    if not isinstance(room_name_1, str) or not isinstance(room_name_2, str):
+        return {"ok": False, "note": "請提供兩個房型名稱。"}
+    names = [room_name_1.strip(), room_name_2.strip()]
+    if not all(names):
+        return {"ok": False, "note": "請提供兩個房型名稱。"}
+    compared = []
+    for name in names:
+        lookup = get_room_info(name)
+        if not lookup["found"]:
+            return {"ok": False, "note": f"找不到房型：{name}，請提供更明確的房型名稱。"}
+        # 部分名稱可能同時符合房型及套餐；不可任意挑選價格。
+        rooms = [item for item in lookup["items"] if item["category"] == "room"]
+        if len(rooms) != 1:
+            return {"ok": False, "note": f"房型「{name}」對應到 {len(rooms)} 個房型，請指定完整房型名稱。",
+                    "possible_rooms": [item["name_zh"] for item in rooms]}
+        compared.append(rooms[0])
+    if compared[0]["name"] == compared[1]["name"]:
+        return {"ok": False, "note": "請提供兩種不同的房型進行比較。"}
+    return {
+        "ok": True,
+        "rooms": compared,
+        "price_difference_per_night": abs(compared[0]["price_per_night_or_fee"] - compared[1]["price_per_night_or_fee"]),
+        "note": "僅比較資料庫示範房價、房型說明與供應標記；不是指定日期的即時空房或最終報價。"
+    }
+
+
 def calculate_stay_total(room_name, nights, rooms):
     """由程式計算住宿總額；價格依資料庫，房數與晚數由客人問題解析而來。"""
     if isinstance(nights, bool) or not isinstance(nights, int) or not 1 <= nights <= 365:
@@ -152,6 +181,7 @@ def transfer_to_human():
 TOOL_FUNCTIONS = {
     "get_hotel_info": get_hotel_info,
     "get_room_info": get_room_info,
+    "compare_rooms": compare_rooms,
     "calculate_stay_total": calculate_stay_total,
     "transfer_to_human": transfer_to_human,
 }
@@ -165,10 +195,17 @@ TOOL_SPECS = [
             "required": ["topic"], "additionalProperties": False}}},
     {"type": "function", "function": {
         "name": "get_room_info",
-        "description": "查詢房型、住宿方案或服務的價格、資料中的供應狀態與說明。使用房型中文或英文名稱的一小段。",
+        "description": "優先查詢 hotel_items 資料表中的房型、住宿方案及服務項目（例如機場接送）的價格、供應狀態與說明；即使服務未供應也要先查資料。使用中文或英文項目名稱的一小段。",
         "parameters": {"type": "object", "properties": {
             "item_name": {"type": "string"}},
             "required": ["item_name"], "additionalProperties": False}}},
+    {"type": "function", "function": {
+        "name": "compare_rooms",
+        "description": "當客人要求比較兩個房型的價格、差異、特色、優缺點時使用。查詢 SQLite 內兩個房型的示範每晚房價、說明和供應標記；不代表即時空房。請分別提供兩個房型名稱。",
+        "parameters": {"type": "object", "properties": {
+            "room_name_1": {"type": "string", "description": "第一種房型中文或英文名稱"},
+            "room_name_2": {"type": "string", "description": "第二種房型中文或英文名稱"}},
+            "required": ["room_name_1", "room_name_2"], "additionalProperties": False}}},
     {"type": "function", "function": {
         "name": "calculate_stay_total",
         "description": "計算住宿費總額時一定要呼叫此工具，不可自行心算。只接受資料庫中唯一的房型／住宿方案名稱，以及住宿晚數與房間數。這不是即時訂房確認。",
@@ -194,11 +231,12 @@ SYSTEM_PROMPT = """
 3. 只回答這家飯店的住宿、房型、設施與服務問題。天氣、作業、寫程式等非客服問題，禮貌拒絕並引導回飯店服務；不需要呼叫飯店資料工具。
 4. 回答要有禮貌，原則上三句以內。依客人使用的語言回答；中文請使用繁體中文和房型中文名稱。
 5. 飯店規定、設施、付款等問題 -> get_hotel_info。
-6. 房型、方案、價格、資料中供應狀態 -> get_room_info。
-7. 任何住宿總額都必須呼叫 calculate_stay_total；不得自己計算。房數或晚數不清楚時，先向客人詢問。
-8. 客訴、要求真人、資料缺漏、即時房況／訂房確認、取消退款等需要人工核實的問題 -> transfer_to_human。
-9. available 是示範資料中的供應標記，不代表指定日期的即時空房。
-10. 不要聲稱已完成訂房、取消、退款或已真正轉接真人。
+6. 詢問房型、住宿方案，以及 hotel_items 資料表中的服務項目（例如機場接送）的價格、說明或供應狀態時，必須先呼叫 get_room_info 查詢。即使項目目前未供應，也應先查詢資料，不可直接猜測或跳過查詢；若資料查不到，或需要確認最新供應狀況，再呼叫 transfer_to_human。
+7. 顧客要比較兩種房型（例如「標準雙人房和家庭房差在哪裡」）時，必須呼叫 compare_rooms；依工具回傳資料比較價格、說明與供應標記，不得自行猜測。若房型名稱有歧義，請客人補充。
+8. 任何住宿總額都必須呼叫 calculate_stay_total；不得自己計算。房數或晚數不清楚時，先向客人詢問。
+9. 客訴、要求真人、資料缺漏、即時房況／訂房確認、取消退款等需要人工核實的問題 -> transfer_to_human。
+10. available 是示範資料中的供應標記，不代表指定日期的即時空房。
+11. 不要聲稱已完成訂房、取消、退款或已真正轉接真人。
 """
 
 MAX_STEPS = 6
@@ -236,12 +274,12 @@ def clean_history(chat_history):
     ]
 
 
-def run_agent(chat_history):
+def run_agent(chat_history, language="Auto"):
     """處理最後一個使用者問題，回傳答案與工具軌跡。"""
     history = clean_history(chat_history)
     question = history[-1]["content"]
-    language = "Traditional Chinese" if re.search(r"[\u4e00-\u9fff]", question) else "English"
-    system = SYSTEM_PROMPT + f"\n本次請以 {language} 回答。"
+    response_language = ("English" if language == "English" else "Traditional Chinese" if language == "繁體中文" else "Traditional Chinese" if re.search(r"[\u4e00-\u9fff]", question) else "English")
+    system = SYSTEM_PROMPT + f"\n本次請以 {response_language} 回答。"
     messages = [{"role": "system", "content": system}] + history
 
     trace = []
@@ -299,7 +337,7 @@ def run_agent(chat_history):
 # ---------------------------------------------------------------------
 GREETING = (
     "您好！我是晴旅小屋的 AI 飯店客服（課程示範版）。"
-    "您可以詢問入住規定、房型價格，或住宿費用試算。"
+    "您可以詢問入住規定、房型價格、比較兩種房型，或住宿費用試算。"
     "房價與供應狀態為示範資料，並非即時訂房資訊。"
 )
 EMPTY_TRACE = "### 工具使用紀錄\n\n（尚未呼叫工具）"
@@ -313,6 +351,7 @@ SAMPLE_GROUPS = {
         "標準雙人房多少錢？",
         "家庭房有包含早餐的方案嗎？",
         "機場接送目前有供應嗎？",
+        "標準雙人房和家庭房有什麼不同？",
     ],
     "住宿費用試算": [
         "標準雙人房住三晚，總共多少錢？",
@@ -339,8 +378,9 @@ def format_trace(trace):
     return "\n".join(lines)
 
 
-def start_chat():
-    return [{"role": "assistant", "content": GREETING}]
+def start_chat(language="繁體中文"):
+    greeting = ("Welcome to Sunny Stay! I can help with hotel policies, room prices, comparisons, and sample cost estimates. All information is for demonstration only, not live availability." if language == "English" else GREETING)
+    return [{"role": "assistant", "content": greeting}]
 
 
 def add_user_message(user_text, chat_history):
@@ -350,109 +390,212 @@ def add_user_message(user_text, chat_history):
     return "", (chat_history or []) + [{"role": "user", "content": user_text}]
 
 
-def answer_question(chat_history):
+def answer_question(chat_history, language="繁體中文"):
     if not chat_history or chat_history[-1]["role"] != "user":
         return chat_history, EMPTY_TRACE
     try:
-        answer, trace = run_agent(chat_history)
+        answer, trace = run_agent(chat_history, language=language)
         panel = format_trace(trace)
     except Exception as error:
         # 不把 API 金鑰或環境設定值寫入畫面。
-        answer = "系統目前無法連線至 AI 服務，請檢查 API 設定與網路後再試。"
+        answer = ("The AI service is unavailable. Please check your API configuration and connection." if language == "English" else "系統目前無法連線至 AI 服務，請檢查 API 設定與網路後再試。")
         panel = "### 工具使用紀錄\n\n（呼叫失敗；請查看終端機錯誤訊息。）"
         print(f"API/agent error: {type(error).__name__}: {error}")
     return chat_history + [{"role": "assistant", "content": answer}], panel
 
 
-LAKE = gr.themes.Color(
-    c50="#eef7f9", c100="#d6ebf0", c200="#b0d7e0", c300="#7fbccb", c400="#4a9bb0",
-    c500="#2c7f96", c600="#226779", c700="#1f5463", c800="#1b4653", c900="#183a45",
-    c950="#0f252d", name="lake",
-)
 
+# ---------------------------------------------------------------------
+# 4. Sunny Stay warm hotel UI
+# ---------------------------------------------------------------------
+COFFEE = gr.themes.Color(
+    c50="#faf7f3", c100="#f4ece2", c200="#e9d8c5", c300="#d6bca2",
+    c400="#bb9978", c500="#947356", c600="#765b49", c700="#614a3b",
+    c800="#4b382e", c900="#362820", c950="#241a15", name="coffee",
+)
 THEME = gr.themes.Soft(
-    primary_hue=LAKE,
-    neutral_hue="slate",
-    radius_size=gr.themes.sizes.radius_md,
+    primary_hue=COFFEE, neutral_hue="stone",
+    radius_size=gr.themes.sizes.radius_lg,
     font=["Noto Sans TC", "Microsoft JhengHei", "PingFang TC", "system-ui", "sans-serif"],
 ).set(
-    body_background_fill="#EAF4F8",
-    body_background_fill_dark="#10212A",
-    button_primary_background_fill="#226779",
-    button_primary_background_fill_hover="#1B4B5A",
-    button_primary_text_color="white",
+    body_background_fill="#F6F0E8",
+    button_primary_background_fill="#765B49",
+    button_primary_background_fill_hover="#614A3B",
+    button_primary_text_color="#FFFFFF",
 )
-
 CSS = """
-.gradio-container { max-width: 1180px !important; margin: 0 auto !important; }
-
-#hero { position: relative; overflow: hidden; padding: 24px 30px;
-        border-radius: 16px; background: #1B4B5A; }
-#hero::after { content: ""; position: absolute; right: -36px; top: -48px;
-               width: 160px; height: 160px; border-radius: 50%; background: #F4B942; }
-#hero h1, #hero p, #hero .tag { position: relative; z-index: 1; }
-#hero h1 { margin: 0 0 8px; font-size: 1.75rem; font-weight: 700; color: #fff; }
-#hero p { margin: 0; max-width: 40em; line-height: 1.75; color: #D6EBF0; }
-#hero .tag { display: inline-block; margin-top: 14px; padding: 3px 14px;
-             border-radius: 999px; background: rgba(255,255,255,.15);
-             font-size: .85rem; color: #fff; }
-@media (max-width: 640px) { #hero::after { display: none; } }
-
-.message.user { background: #226779 !important; border-color: #226779 !important; }
-.message.user, .message.user * { color: #fff !important; }
-.message.bot { background: var(--background-fill-primary) !important; }
-
-#trace-panel { padding: 14px 18px; min-height: 220px; max-height: 640px; overflow-y: auto;
-               background: var(--background-fill-primary);
-               border: 1px solid var(--border-color-primary);
-               border-left: 4px solid #F4B942; border-radius: 12px; }
-#trace-panel h3 { margin-top: 0; font-size: 1.05rem; }
-#trace-panel code { white-space: pre-wrap; word-break: break-all; font-size: .82rem; }
+.gradio-container { max-width: 1120px !important; margin: 0 auto !important; }
+#sunny-hero { background: linear-gradient(115deg,#765B49,#96775F); color:white;
+  padding:28px 32px; border-radius:20px; margin-bottom:14px; }
+#sunny-hero h1 { color:white; font-size:1.85rem; margin:0 0 6px; }
+#sunny-hero p { color:#F4E9DE; margin:0; }
+#sunny-hero .tag { display:inline-block; background:#ffffff2b; border-radius:30px;
+  padding:4px 12px; font-size:.78rem; margin-top:12px; }
+#intro-panel { background:#FFFDFB; border:1px solid #E9DDD0; border-radius:16px; padding:15px 18px; }
+#intro-panel h2 { color:#765B49; font-size:1.25rem; margin:0 0 6px; }
+#intro-panel p { color:#75695D; margin:0; }
+#trace-panel { border-left:4px solid #B99670; padding:12px 16px; border-radius:12px;
+  background:#FFFDFB; max-height:480px; overflow-y:auto; }
+#trace-panel code { white-space:pre-wrap; overflow-wrap:anywhere; }
+#footer-note { text-align:center; color:#87786B; font-size:.8rem; margin-top:12px; }
+.message.user { background:#765B49 !important; border-color:#765B49 !important; }
+.message.user, .message.user * { color:white !important; }
+@media(max-width:650px) { #sunny-hero { padding:20px; } #sunny-hero h1 { font-size:1.45rem; } }
 """
+HERO_HTML = """<div id="sunny-hero">
+  <h1>☀ 晴旅小屋 Sunny Stay</h1>
+  <p>Your Cozy AI Hotel Assistant · 您的貼心 AI 住宿小幫手</p>
+  <span class="tag">COURSE DEMO · 課程示範系統</span>
+</div>"""
 
-HERO_HTML = """
-<div id="hero">
-  <h1>晴旅小屋 客服</h1>
-  <p>問入住規定、查房型價格、試算住宿費用。每次回答都由 AI 查詢資料庫，右側會列出它用了哪些工具。</p>
-  
-</div>
-"""
-
-blocks_kwargs = {"title": "晴旅小屋 AI 客服"}
+blocks_kwargs = {"title": "晴旅小屋 Sunny Stay｜AI 智慧客服"}
 launch_kwargs = {}
-# Gradio 6 把 theme / css 移到 launch()；舊版仍放在 Blocks()
 if "theme" in inspect.signature(gr.Blocks.launch).parameters:
     launch_kwargs.update(theme=THEME, css=CSS)
 else:
     blocks_kwargs.update(theme=THEME, css=CSS)
 
+def quick_prompt(kind, language):
+    prompts = {
+        "room": ("What room types are available and what are their prices?", "有哪些房型？各房型的價格是多少？"),
+        "compare": ("Compare the standard double room and family room, including prices and features.", "請比較標準雙人房與家庭房的價格及特色。"),
+        "total": ("How much is a standard double room for three nights?", "標準雙人房住三晚，總共多少錢？"),
+        "info": ("What time is check-in?", "請問幾點可以入住？"),
+    }
+    en, zh = prompts[kind]
+    return en if language == "English" else zh
+
+
+def switch_language(language, history):
+    english = language == "English"
+    if not history or (len(history) == 1 and history[0].get("role") == "assistant"):
+        history = start_chat(language)
+    return (
+        history,
+        gr.update(value="Room lookup" if english else "查詢房型"),
+        gr.update(value="Compare rooms" if english else "比較房型"),
+        gr.update(value="Stay cost estimate" if english else "住宿費用試算"),
+        gr.update(value="Check-in & facilities" if english else "入住與設施"),
+        gr.update(value="Send" if english else "送出"),
+        gr.update(value="Clear chat" if english else "清除對話"),
+        gr.update(placeholder="Ask about your stay, e.g. What time is check-in?" if english else "請輸入您的住宿問題，例如：幾點可以入住？"),
+        gr.update(value="### AI chat" if english else "### AI 客服對話"),
+        gr.update(value="### Welcome to Sunny Stay!\\nAsk a question or use a shortcut below." if english else "### 您好，歡迎來到晴旅小屋！\\n今天想了解什麼住宿資訊呢？可直接提問，或點選下方快捷功能。"),
+    )
+
+
+def choose_example(text):
+    return text
+
+
+# Tool-choice test cases: same purpose as Unit G-3 Step 9.
+# A pass means the expected tool was called at least once, or no tool was called
+# for an out-of-scope question. This does not grade answer correctness.
+TOOL_CHOICE_TESTS = [
+    ("請問幾點可以入住？", "get_hotel_info"),
+    ("飯店有提供 Wi-Fi 嗎？", "get_hotel_info"),
+    ("可以帶寵物入住嗎？", "get_hotel_info"),
+    ("標準雙人房多少錢？", "get_room_info"),
+    ("有家庭房嗎？", "get_room_info"),
+    ("有提供機場接送服務嗎？", "get_room_info"),
+    ("標準雙人房住三晚，總共多少錢？", "calculate_stay_total"),
+    ("兩間家庭房住兩晚要多少錢？", "calculate_stay_total"),
+    ("我要取消訂房並退款。", "transfer_to_human"),
+    ("我想找真人客服。", "transfer_to_human"),
+    ("請問明天還有空房嗎？", "transfer_to_human"),
+    ("可以幫我寫期中報告嗎？", None),
+]
+
+
+def run_tool_choice_test():
+    """Run fresh single-turn conversations and show actual tool choices."""
+    rows = []
+    correct = 0
+    for index, (question, expected) in enumerate(TOOL_CHOICE_TESTS, 1):
+        try:
+            _, trace = run_agent([{"role": "user", "content": question}])
+            used = [entry["tool"] for entry in trace]
+            passed = (not used) if expected is None else expected in used
+            correct += int(passed)
+            status = "OK" if passed else "MISS"
+            actual = ", ".join(used) if used else "無工具"
+        except Exception as exc:
+            status = "ERROR"
+            actual = f"{type(exc).__name__}（詳見終端機）"
+            print(f"Tool-choice test Q{index}: {type(exc).__name__}: {exc}")
+        rows.append([index, question, expected or "無工具", actual, status])
+
+    total = len(TOOL_CHOICE_TESTS)
+    errors = sum(row[-1] == "ERROR" for row in rows)
+    score = f"### 測試結果：{correct}/{total} = {correct / total:.1%}"
+    if errors:
+        score += f"\n\n有 {errors} 題執行錯誤，已按未通過計算；請檢查終端機。"
+    score += "\n\n請截取這張表及分數，作為報告第 5.2 題的測試輸出。"
+    return rows, score
+
+
 with gr.Blocks(**blocks_kwargs) as demo:
     gr.HTML(HERO_HTML)
-    with gr.Row(equal_height=False):
-        with gr.Column(scale=3):
-            chatbot = gr.Chatbot(value=start_chat(), height=520, show_label=False)
+    with gr.Row():
+        gr.Markdown("**Language / 語言** — Choose English or 繁體中文. Chat replies follow this setting.")
+        language_choice = gr.Radio(["繁體中文", "English"], value="繁體中文", show_label=False)
+    with gr.Tabs():
+        with gr.Tab("AI 智慧客服 / AI Chat"):
+            intro = gr.Markdown("### 您好，歡迎來到晴旅小屋！\n今天想了解什麼住宿資訊呢？可直接提問，或點選下方快捷功能。")
             with gr.Row():
-                user_box = gr.Textbox(
-                    placeholder="輸入問題，例如：幾點可以入住？",
-                    show_label=False, scale=8, container=False,
-                )
-                send_button = gr.Button("送出", variant="primary", scale=1, min_width=80)
+                quick_room = gr.Button("查詢房型", variant="secondary")
+                quick_compare = gr.Button("比較房型", variant="secondary")
+                quick_total = gr.Button("住宿費用試算", variant="secondary")
+                quick_info = gr.Button("入住與設施", variant="secondary")
+
+            chat_title = gr.Markdown("### AI 客服對話")
+            chatbot = gr.Chatbot(value=start_chat(), height=450, show_label=False)
+            with gr.Row():
+                user_box = gr.Textbox(placeholder="請輸入您的住宿問題，例如：幾點可以入住？", show_label=False, scale=8, container=False)
+                send_button = gr.Button("送出", variant="primary", scale=1, min_width=76)
                 clear_button = gr.Button("清除對話", scale=1, min_width=96)
-            with gr.Accordion("範例問題（點選後按送出）", open=True):
+
+            with gr.Accordion("範例問題 / Example questions", open=False):
                 for group, questions in SAMPLE_GROUPS.items():
                     gr.Examples(examples=questions, inputs=user_box, label=group)
-        with gr.Column(scale=2):
-            trace_panel = gr.Markdown(EMPTY_TRACE, elem_id="trace-panel")
+                gr.Examples(examples=["What time is check-in?", "How much is a family room?", "Compare the standard double room and family room.", "Can I speak with a human agent?"], inputs=user_box, label="English examples")
 
-    send_button.click(add_user_message, [user_box, chatbot], [user_box, chatbot]).then(
-        answer_question, chatbot, [chatbot, trace_panel]
-    )
-    user_box.submit(add_user_message, [user_box, chatbot], [user_box, chatbot]).then(
-        answer_question, chatbot, [chatbot, trace_panel]
-    )
-    clear_button.click(start_chat, outputs=chatbot).then(
-        lambda: ("", EMPTY_TRACE), outputs=[user_box, trace_panel]
-    )
+            with gr.Accordion("Tool Trace｜工具執行紀錄", open=False):
+                trace_panel = gr.Markdown(EMPTY_TRACE, elem_id="trace-panel")
+
+            quick_room.click(lambda lang: quick_prompt("room", lang), inputs=language_choice, outputs=user_box)
+            quick_compare.click(lambda lang: quick_prompt("compare", lang), inputs=language_choice, outputs=user_box)
+            quick_total.click(lambda lang: quick_prompt("total", lang), inputs=language_choice, outputs=user_box)
+            quick_info.click(lambda lang: quick_prompt("info", lang), inputs=language_choice, outputs=user_box)
+
+            send_button.click(add_user_message, [user_box, chatbot], [user_box, chatbot]).then(
+                answer_question, [chatbot, language_choice], [chatbot, trace_panel]
+            )
+            user_box.submit(add_user_message, [user_box, chatbot], [user_box, chatbot]).then(
+                answer_question, [chatbot, language_choice], [chatbot, trace_panel]
+            )
+            clear_button.click(lambda lang: start_chat(lang), inputs=language_choice, outputs=chatbot).then(
+                lambda: ("", EMPTY_TRACE), outputs=[user_box, trace_panel]
+            )
+            language_choice.change(
+                switch_language, [language_choice, chatbot],
+                [chatbot, quick_room, quick_compare, quick_total, quick_info,
+                 send_button, clear_button, user_box, chat_title, intro]
+            )
+
+        with gr.Tab("功能測試中心 / 12 Tests"):
+            gr.Markdown("## Tool-Choice Test / 工具選擇測試\n保留原本 12 題中文測試，以相同題目檢查工具呼叫。This test uses the original 12 Chinese questions.")
+            test_button = gr.Button("開始 12 題測試 / Run 12 tests", variant="primary")
+            test_score = gr.Markdown("### 尚未測試 / Not tested")
+            test_table = gr.Dataframe(
+                headers=["題號 / #", "問題 / Question", "預期工具 / Expected", "實際工具 / Actual", "結果 / Result"],
+                datatype=["number", "str", "str", "str", "str"],
+                value=[], interactive=False, label="逐題測試紀錄 / Test results",
+            )
+            gr.Markdown("**評分說明 / Note:** 只檢查是否呼叫預期工具，不代表回答完全正確。This measures tool selection, not answer accuracy.")
+            test_button.click(run_tool_choice_test, outputs=[test_table, test_score])
+
+    gr.HTML('<div id="footer-note">課程示範 / Course demo only. Prices and availability are not live quotations or confirmed reservations.</div>')
 
 if __name__ == "__main__":
-    demo.launch(**launch_kwargs)
+    demo.launch(server_name="127.0.0.1", server_port=7860, **launch_kwargs)
